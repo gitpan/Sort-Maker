@@ -1,4 +1,4 @@
-#!/usr/local/bin/perl -w
+#!/usr/local/bin/perl -sw
 
 use strict ;
 
@@ -26,10 +26,24 @@ my $sort_tests = [
 	},
 	{
 		skip	=> 0,
+		name	=> 'unsigned integer descending',
+		data	=> [ 32, 2, 9, 7 ],
+		gold	=> sub { $b <=> $a },
+		args	=> [ qw( unsigned number descending ) ],
+	},
+	{
+		skip	=> 0,
 		name	=> 'signed integer',
 		data	=> [ 32, -2, 9, -7 ],
 		gold	=> sub { $a <=> $b },
 		args	=> [ qw( signed number ) ],
+	},
+	{
+		skip	=> 0,
+		name	=> 'signed integer descending',
+		data	=> [ 32, -2, 9, -7 ],
+		gold	=> sub { $b <=> $a },
+		args	=> [ qw( signed number descending ) ],
 	},
 	{
 		skip	=> 0,
@@ -40,10 +54,24 @@ my $sort_tests = [
 	},
 	{
 		skip	=> 0,
+		name	=> 'unsigned float descending',
+		data	=> [ 32, 2, 9, 7.0, 7.1 ],
+		gold	=> sub { $b <=> $a },
+		args	=> [ qw( unsigned_float number descending ) ],
+	},
+	{
+		skip	=> 0,
 		name	=> 'signed float',
 		data	=> [ 32, -2, 9, -7 ],
 		gold	=> sub { $a <=> $b },
 		args	=> [ qw( signed_float number ) ],
+	},
+	{
+		skip	=> 0,
+		name	=> 'signed float descending',
+		data	=> [ 32, -2, 9, -7.0, -7.1 ],
+		gold	=> sub { $b <=> $a },
+		args	=> [ qw( signed_float number descending ) ],
 	},
 	{
 		skip	=> 0,
@@ -118,7 +146,6 @@ my $sort_tests = [
 	},
 ] ;
 
-test_driver( $sort_tests, \@sort_styles ) ;
+common_driver( $sort_tests, \@sort_styles ) ;
 
 exit ;
-

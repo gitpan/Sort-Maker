@@ -6,6 +6,8 @@ use lib 't' ;
 use lib '..' ;
 require 'common.pl' ;
 
+use vars '$bench' ;
+
 my @sort_styles = qw( plain orcish ST GRT ) ;
 
 my $sort_tests = [
@@ -16,7 +18,6 @@ my $sort_tests = [
 		data	=> [ qw( z e a k ) ],
 		gold	=> sub { $a cmp $b },
 		sizes	=> [ 100, 1000 ],
-#		sizes	=> [ 5000 ],
 		gen	=> sub { rand_token() },
 		args	=> {
 			default	=> [ qw( string ) ],
@@ -41,13 +42,6 @@ my $sort_tests = [
 	},
 ] ;
 
-our $bench ;
-
-if ( $bench ) {
-	benchmark_driver( $sort_tests, \@sort_styles ) ;
-}
-else {
-	test_driver( $sort_tests, \@sort_styles ) ;
-}
+common_driver( $sort_tests, \@sort_styles ) ;
 
 exit ;

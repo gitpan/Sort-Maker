@@ -8,17 +8,16 @@ use Data::Dumper ;
 %EXPORT_TAGS = ( 'all' => [ qw( sorter_source ), @EXPORT ] );
 @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 use strict;
 
-use constant BIG_ENDIAN => pack('N', 1) eq pack('L', 1) ;
-use constant FLOAT_LEN => length pack "d", 1 ;
-use constant INT_LEN => length pack "N", 1 ;
-use constant INT_BIT_LEN => INT_LEN * 8 ;
-use constant FLOAT_PACK => BIG_ENDIAN ?
-		q{pack( 'd', $val )} :
-		q{reverse( pack( 'd', $val ) )} ;
+# get integer and float sizes endian order
+
+my $FLOAT_LEN = length pack "d", 1 ;
+my $INT_LEN   = length pack "N", 1 ;
+my $INT_BIT_LEN = $INT_LEN * 8 ;
+my $IS_BIG_ENDIAN = pack('N', 1) eq pack('L', 1) ;
 
 my @boolean_attrs = qw(
 	ascending
@@ -396,7 +395,6 @@ CMP
 
 	my $source = <<SUB ;
 sub {
-	$options->{init_code}
 	$open_bracket
 	sort {
 $compare_source
@@ -457,7 +455,6 @@ CMP
 	my $source = <<SUB ;
 sub {
 	my ( $cache_dcl ) ;
-	$options->{init_code}
 
 	$open_bracket
 	sort {
@@ -495,9 +492,9 @@ CMP
 		do{ my (\$val) = EXTRACT ; uc \$val }
 EXT
 
-		$st_extract =~ s/EXTRACT/$key->{code}/ ;
 		$st_extract =~ s/uc //
 			unless $key->{type} eq 'string' && $key->{no_case} ;
+		$st_extract =~ s/EXTRACT/$key->{code}/ ;
 
 		chomp( $st_extract ) ;
 		push( @st_extracts, $st_extract ) ;
@@ -570,7 +567,7 @@ sub _make_GRT_sort {
 # SKIP for 'string_data' attribute
 ##########
 
-	$pack_format .= 'N' ;
+	$pack_format .= 'N' unless $options->{string_data} ;
 
 	my $extract_source = join ",\n", @grt_extracts ;
 	chomp( $extract_source ) ;
@@ -583,22 +580,22 @@ sub _make_GRT_sort {
 
 
 	my $get_index_code = <<INDEX ;
-unpack( 'N', substr( \$_, -INT_LEN ) )
+unpack( 'N', substr( \$_, -$INT_LEN ) )
 INDEX
 	chomp $get_index_code ;
 
 	my $source = $options->{string_data} ? <<STRING_DATA : <<REF_DATA ;
 sub {
-	my \$rec_ind = 0 ;
+
 $init_code
-	return $open_bracket ${input}\[
-	    map $get_index_code, 
+        return $open_bracket 
+	    map substr( \$_, rindex( \$_, "\0" ) + 1 ),
 	    sort
-	    map pack( "$pack_format",
+	    map pack( "${pack_format}xa*",
 $extract_source,
-		\$rec_ind++
+                \$_
 	    ), ${input}
-        ] $close_bracket;
+         $close_bracket;
 }
 STRING_DATA
 sub {
@@ -615,32 +612,41 @@ $extract_source,
 }
 REF_DATA
 
-	$source =~ s/INT_LEN/INT_LEN/ge ;
-	$source =~ s/FLOAT_LEN/FLOAT_LEN/ge ;
-	$source =~ s/FLOAT_PACK/FLOAT_PACK/ge ;
-
 #print $source ;
 
 	return $source ;
 }
 
+# code string to pack a float key value.
+
+my $FLOAT_PACK = $IS_BIG_ENDIAN ?
+		q{pack( 'd', $val )} :
+		q{reverse( pack( 'd', $val ) )} ;
+
+# bit mask to xor a packed float
+
+my $XOR_NEG = '\xFF' x $FLOAT_LEN ;
 
 sub _make_GRT_number_key {
 
 	my( $key ) = @_ ;
 
-	my( $pack_format, $val_code, $negate ) ;
+	my( $pack_format, $val_code, $negate_code ) ;
 
 	if ( $key->{descending} ) {
 
-		$negate = '-' ;
+# negate the key values so they sort in descending order
+
+		$negate_code = '$val = -$val; ' ;
+
+# descending GRT number sorts must be signed to handle the negated values
 
 		$key->{signed} = 1 if delete $key->{unsigned} ;
 		$key->{signed_float} = 1 if delete $key->{unsigned_float} ;
 	}
 	else {
 
-		$negate = '' ;
+		$negate_code = '' ;
 	}
 
 	if ( $key->{unsigned} ) {
@@ -650,26 +656,50 @@ sub _make_GRT_number_key {
 	}
 	elsif ( $key->{signed} ) {
 
+# convert the signed integer to unsigned by flipping the sign bit
+
 		$pack_format = 'N' ;
-		$val_code = '$val ^ (1 << (INT_BIT_LEN - 1))'
+		$val_code = "\$val ^ (1 << ($INT_BIT_LEN - 1))"
 	}
 	elsif ( $key->{unsigned_float} ) {
 
-		$pack_format = 'AFLOAT_LEN' ;
-		$val_code = FLOAT_PACK ;
+# pack into A format with a length of a float
+
+		$pack_format = "A$FLOAT_LEN" ;
+		$val_code =  qq{ $FLOAT_PACK ^ "\\x80" } ;
 	}
 	else {
 
 # must be a signed float
 
-		my $xor_neg = '\xFF' x FLOAT_LEN ;
-		$pack_format = 'AFLOAT_LEN' ;
-		$val_code = qq{
-			( \$val < 0 ? "$xor_neg" : "\\x80" ) ^ FLOAT_PACK } ;
+		$pack_format = "A$FLOAT_LEN" ;
+
+# debug code that can be put in to dump what is being packed.
+#		print "V [\$val]\\n" ;
+#		 print unpack( 'H*', pack 'd', \$val ), "\\n" ;
+
+
+# only negate float numbers other than 0. in some odd cases a float 0
+# gets converted to a -0 (which is a legal ieee float) and the GRT
+# packs it as 0x80000.. instead of 0x00000....)
+
+# it happens on sparc and perl 5.6.1. it needs a math op (the tests
+# runs the gold sort which does <=> on it) and then negation for -0 to
+# show up. 5.8 on sparc is fine and all perl versions on intel are
+# fine
+
+# the 'signed float edge case descending' test in t/numbers.t 
+# looks for this.
+
+		$negate_code =~ s/;/ if \$val;/ ;
+
+		$val_code = qq{ $FLOAT_PACK ^
+					( \$val < 0 ? "$XOR_NEG" : "\\x80" )
+		} ;
 	}
 
 	my $grt_extract = <<CODE ;
-		do{ my (\$val) = $key->{code} ; $val_code }
+		do{ my (\$val) = $key->{code} ; $negate_code$val_code }
 CODE
 
 	return( $pack_format, $grt_extract, '' ) ;
@@ -729,8 +759,8 @@ ERR
 		do{ my( \$val ) = EXTRACT ; uc( \$val )$descend_code }
 CODE
 
-	$grt_extract =~ s/EXTRACT/$key->{code}/ ;
 	$grt_extract =~ s/uc// unless $key->{no_case} ;
+	$grt_extract =~ s/EXTRACT/$key->{code}/ ;
 
 	return( $pack_format, $grt_extract, $init_code ) ;
 }
@@ -875,11 +905,16 @@ record in C<$_>. It only modifies the I/O of the generated sorter.
 
 =head3 C<string_data>
 
-This boolean argument specifies that the input records will be
-strings.  It is only valid for use with the GRT and it is ignored for
-the other sort styles. It tells the GRT that it can put the record
-directly into the string cache. See the section below on the GRT for
-more detail.
+This boolean argument specifies that the input records will be plain
+text strings with no null (0x0) bytes in them.  It is only valid for
+use with the GRT and it is ignored for the other sort styles. It tells
+the GRT that it can put the record directly into the string cache and
+it will be separated from the packed keys with a null byte (hence that
+restriction). This is an optimization that can run slightly faster
+than the normal index sorting done with the GRT. Run this to see the
+benchmark results.
+
+	perl t/string_data.t -bench
 
 =head3 C<init_code>
 
@@ -902,6 +937,7 @@ common part of the key extraction is:
 And the make_sorter call is:
 
 	my $sorter = make_sorter( 
+		style => 'ST',
 		init_code => 'my( $str, $num ) ;',
 		string => 'do{( $str, $num ) =
 			$_->[0][0]{a} =~ /^(\w+):(\d+)$/; $str}',
@@ -911,6 +947,18 @@ And the make_sorter call is:
 In that code both keys are extracted in the first key extraction code
 and the number key is saved in C<$num>. The second key extraction code
 just uses that saved value.
+
+Note that C<init_code> is only useful in the ST and GRT sort styles as
+they process all the keys of a record at one time and can use
+variables declared in C<init_code> to transfer data to later keys. The
+plain and orcish sorts may not process a later key at the same time as
+an earlier key (that only happens when the earlier key is compared to
+an equal key. Also for C<init_code> to be a win, the data set must be
+large enough and the work to extract the keys must be hard enough for
+the savings to be noticed. The test init_code.t shows some examples
+and you can see the speedup when you run:
+
+	perl t/init_code.t -bench
 
 =head2 Key Description Arguments
 
@@ -1063,11 +1111,11 @@ Code for more.
 
 =head3 ascending/descending
 
-These two attributes control the sorting order for this key. If a key
-is marked as C<ascending> (which is the initial default for all keys),
-then lower keys will sort before higher keys. C<descending> sorts have
-the higher keys sort before the lower keys. It is illegal to have both
-set in the defaults or in any key.
+These two Boolean attributes control the sorting order for this
+key. If a key is marked as C<ascending> (which is the initial default
+for all keys), then lower keys will sort before higher
+keys. C<descending> sorts have the higher keys sort before the lower
+keys. It is illegal to have both set in the defaults or in any key.
 
 	# sort by descending order of the first grabbed number
 	# and then sort in ascending order the first grabbed <word>
@@ -1108,7 +1156,7 @@ set in the defaults or in any key.
 
 =head3 case/no_case
 
-These two attributes control the how 'string' keys handle case
+These two Boolean attributes control the how 'string' keys handle case
 sensitivity. If a key is marked as C<case> (which is the initial
 default for all keys), then keys will treat upper and lower case
 letters as different.  If the key is marked as C<no_case> then they
@@ -1162,11 +1210,11 @@ locale settings to affect string sorts.
 
 =head3 signed/unsigned/signed_float/unsigned_float (GRT only)
 
-These attributes are only used by the GRT sort style. They are meant
-to describe the type of a number key so that the GRT can best process
-and cache the key's value. It is illegal to have more than one of them
-set in the defaults or in any key. See the section on GRT sorting for
-more.
+These Boolean attributes are only used by the GRT sort style. They are
+meant to describe the type of a number key so that the GRT can best
+process and cache the key's value. It is illegal to have more than one
+of them set in the defaults or in any key. See the section on GRT
+sorting for more.
 
 The C<signed> and C<unsigned> attributes mark this number key as an
 integer. The GRT does the least amount of work processing an unsigned
@@ -1183,17 +1231,17 @@ auto-generate sorts.
 
 =head3 fixed/varying (GRT only)
 
-These attributes are only used by the GRT sort style. They are meant
+These attributes are only used by the GRT sort style. They are used
 to describe the type of a string key so that the GRT can properly
 process and cache the key's value. It is illegal to have more than one
 of them set in the defaults or in any key. See the section on GRT
 sorting for more.
 
-C<fixed> is a Boolean attribute that marks this string key as always
-being a fixed length. The extracted value will either be padded with
-null (0x0) bytes or truncated to the specified length. The data in
-this key can have embedded null bytes (0x0) and also it can be sorted
-in descending order.
+C<fixed> is a value attribute that marks this string key as always
+being this length. The extracted value will either be padded with null
+(0x0) bytes or truncated to the specified length (the value of
+C<fixed>. The data in this key can have embedded null bytes (0x0) and
+also it can be sorted in descending order.
 
 C<varying> is a Boolean attribute marks this string key as being of
 varying lengths. The GRT sorter will do a scan of all of this key's
@@ -1396,7 +1444,7 @@ default choice).
 
 =head3 C<unsigned>
 
-The 'unsigned' attribute tells the GRT that this number key is a
+The 'unsigned' Boolean attribute tells the GRT that this number key is a
 non-negative integer. This allows the GRT to just pack it into 4 bytes
 using the N format (network order - big endian). An integer packed this
 way will have its most significant bytes compared before its least
@@ -1409,9 +1457,9 @@ advantage to using 'unsigned'.
 
 =head3 signed
 
-The 'signed' attribute tells the GRT that this number key is an
-integer. This allows the GRT to just pack it into 4 bytes using the N
-format (network order - big endian).  The key value must first be
+The 'signed' Boolean attribute tells the GRT that this number key is
+an integer. This allows the GRT to just pack it into 4 bytes using the
+N format (network order - big endian).  The key value must first be
 normalized which will convert it to an unsigned integer but with the
 same ordering as a signed integer. This is simply done by inverting
 the sign (highest order) bit of the integer. As mentioned above, when
@@ -1425,17 +1473,17 @@ bit integers (anyone want to help?).
 
 =head3 C<unsigned_float>
 
-The 'unsigned_float' attribute tells the GRT that this number key is a
-non-negative floating point number. This allows the GRT to pack it
-into 8 bytes using the 'd' format. A float packed this way will have
-its most significant bytes compared before its least signifigant
-bytes. 
+The 'unsigned_float' Boolean attribute tells the GRT that this number
+key is a non-negative floating point number. This allows the GRT to
+pack it into 8 bytes using the 'd' format. A float packed this way
+will have its most significant bytes compared before its least
+signifigant bytes.
 
 =head3 C<signed_float>
 
-The C<signed_float> attribute (which is the default for all number
-keys when using the GRT) tells the GRT that this number key is a
-floating point number. This allows the GRT to pack it into 8 bytes
+The C<signed_float> Boolean attribute (which is the default for all
+number keys when using the GRT) tells the GRT that this number key is
+a floating point number. This allows the GRT to pack it into 8 bytes
 using the 'd' format. A float packed this way will have its most
 significant bytes compared before its least signifigant bytes. When
 processed this key will be normalized to an unsigned float similar to
@@ -1462,16 +1510,16 @@ in it, the key must have one of those attributes set.
 
 =head3 C<fixed>
 
-This boolean attribute tells the GRT to pack this key value as a fixed
+This value attribute tells the GRT to pack this key value as a fixed
 length string. The extracted value will either be padded with null
-(0x0) bytes or truncated to the specified length. This means it can be
-packed into the cache string with no padding and no trailing null byte
-is needed. The key can contain any data including null (0x0)
-bytes. The only data munging is if the key's sort order is descending,
-then the key value is xor'ed with a same length string of 0xff
-bytes. This toggles each bit which allows for a lexical comparison but
-in the reverse order. This same bit inversion is used for descending
-varying strings.
+(0x0) bytes or truncated to the specified length (the value of the
+C<fixed> attribute). This means it can be packed into the cache string
+with no padding and no trailing null byte is needed. The key can
+contain any data including null (0x0) bytes. The only data munging
+happens if the key's sort order is descending. Then the key value is
+xor'ed with a same length string of 0xff bytes. This toggles each bit
+which allows for a lexical comparison but in the reverse order. This
+same bit inversion is used for descending varying strings.
 
 =head3 C<varying>
 
@@ -1544,15 +1592,14 @@ entry:
 
 C<skip> is a boolean that causes this test/benchmark to be skipped.
 Setting C<source> causes the sorter's source to be printed out.
-C<gen> is a sub that generated a single record. There are random data
-subs in t/common.pl. Some tests have a C<data> field which is fixed
-data for a test (instead of the generated data). The <gold> field is a
-comparision subroutine usable by the sort function. It is used to sort
-the test data into a golden result which is used to compare against
-all the generated sorters. C<args> is an anonmyous of arguments for a
-sorter or a hash ref with multiple named/args pairs. See t/io.t for an
-example of that.
-
+C<gen> is a sub that generates a single input record. There are
+supports subs in t/common.pl that will generate random data. Some
+tests have a C<data> field which is fixed data for a test (instead of
+the generated data). The <gold> field is a comparision subroutine
+usable by the sort function. It is used to sort the test data into a
+golden result which is used to compare against all the generated
+sorters. C<args> is an anonmyous of arguments for a sorter or a hash
+ref with multiple named/args pairs. See t/io.t for an example of that.
 
 =head1 BENCHMARKS
 
@@ -1560,6 +1607,15 @@ example of that.
 
 This module always exports the C<make_sorter> sub.  It can also
 optionally export C<sorter_source>.
+
+=head1 BUGS
+
+Sort::Maker GRT currently works only with 32 bit integers due to pack
+N format being exactly 32 bits. If someone with a 64 bit Perl wants to
+work on using the Q format or the ! suffix and dealing with endian
+issues, I will be glad to help and support it. It would be best if
+there was a netowork (big endian) pack format for quads/longlongs but
+that can be done similarly to how floats are packed now.
 
 =head1 AUTHOR
 

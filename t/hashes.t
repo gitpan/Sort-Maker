@@ -1,4 +1,4 @@
-#!/usr/local/bin/perl -w
+#!/usr/local/bin/perl -sw
 
 use strict ;
 
@@ -56,6 +56,6 @@ my $sort_tests = [
 	},
 ] ;
 
-test_driver( $sort_tests, \@sort_styles ) ;
+common_driver( $sort_tests, \@sort_styles ) ;
 
 exit ;

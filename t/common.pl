@@ -7,6 +7,21 @@ use Benchmark ;
 
 use Sort::Maker qw( :all ) ;
 
+use vars '$bench' ;
+
+sub common_driver {
+
+	my( $sort_tests, $sort_styles, $default_sizes ) = @_ ;
+
+	if ( $bench ) {
+
+		benchmark_driver( $sort_tests, $sort_styles, $default_sizes ) ;
+		return ;
+	}
+
+	test_driver( $sort_tests, $sort_styles ) ;
+}
+
 sub test_driver {
 
 	my( $sort_tests, $default_styles ) = @_ ;
@@ -54,10 +69,12 @@ sub run_tests {
 		my @test_sorted = $sorter->( @sorter_in ) ;
 		@test_sorted = @{$test_sorted[0]} if $sort_name =~ /ref_out/ ;
 
-#print "style SORTED [@test_sorted]\n" ;
+		my $ok = eq_array( \@gold_sorted, \@test_sorted ) ;
 
-		ok( eq_array( \@gold_sorted, \@test_sorted ),
-			"$sort_name sort of $test->{name}" ) ;
+print "TEST [@test_sorted]\n" unless $ok ;
+print "GOLD [@gold_sorted]\n" unless $ok ;
+
+		ok( $ok, "$sort_name sort of $test->{name}" ) ;
 	}
 }
 
@@ -125,19 +142,17 @@ sub generate_data {
 	my( $test, $default_sizes ) = @_ ;
 
 	my $gen_code = $test->{gen} ;
-	die "no 'gen' code for test $test->{name}" unless $gen_code ;
+	$gen_code or die "no 'gen' code for test $test->{name}" ;
 
-	my @data_sets ;
+	my @sizes = @{ $test->{sizes} || $default_sizes || [100] } ;
 
-	foreach my $size ( @{ $test->{sizes} || $default_sizes || [100] } ) {
+# return a single data set when called in scalar context (from test_driver)
 
-		push( @data_sets, [ map $gen_code->(), 1 .. $size ] ) ;
-	}
+	return [ map $gen_code->(), 1 .. shift @sizes ] unless wantarray ;
 
-#print Dumper \@data_sets ;
+# return multiple data sets when called in list context (from benchmark_driver)
 
-	return @data_sets if wantarray ;
-	return $data_sets[0] ;
+	return map [ map $gen_code->(), 1 .. $_ ], @sizes ;
 }
 
 sub make_test_sorters {
@@ -167,7 +182,7 @@ sub make_test_sorters {
 
 			die "$@\n" unless $sorter ;
 
-			print "$sort_name source is:\n",
+			print "Source of $sort_name $test->{name} is:\n",
 				sorter_source( $sorter ) if $test->{source} ;
 
 			$test->{sorters}{$sort_name} = $sorter ;
@@ -241,9 +256,7 @@ sub rand_number {
 
 sub rand_choice {
 
-	my( @choices ) = @_ ;
-
-	return @choices[rand @choices] ;
+	return @_[rand @_] ;
 }
 
 1 ;

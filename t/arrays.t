@@ -1,4 +1,4 @@
-#!/usr/local/bin/perl -w
+#!/usr/local/bin/perl -sw
 
 use strict ;
 
@@ -6,7 +6,7 @@ use lib 't' ;
 use lib '..' ;
 require 'common.pl' ;
 
-my @sort_styles = qw( plain orcish ST GRT ) ;
+my $sort_styles = [ qw( plain orcish ST GRT ) ] ;
 
 my $sort_tests = [
 
@@ -55,6 +55,6 @@ my $sort_tests = [
 	},
 ] ;
 
-test_driver( $sort_tests, \@sort_styles ) ;
+common_driver( $sort_tests, $sort_styles ) ;
 
 exit ;

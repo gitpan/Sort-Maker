@@ -9,8 +9,10 @@ t/arrays.t
 t/hashes.t
 t/io.t
 t/GRT.t
+t/numbers.t
 t/regex.t
 t/init_code.t
+t/string_data.t
 t/common.pl
 META.yml                                 Module meta-data (added by MakeMaker)
 slides/sort_maker.txt
