@@ -6,9 +6,9 @@ Revision history for Perl extension Sort::Maker.
 
 0.02  Fri Aug 27 00:43:25 EDT 2004
 	- fixed bug in decending integer/float GRT sorts (tests included)
-		-from  Marc Prewitt <mprewitt@dmja.com>
+		-from Marc Prewitt <mprewitt@dmja.com>
 	- cleaned up pod regarding 'fixed' and other attributes
-		-from  Marc Prewitt <mprewitt@dmja.com>
+		-from Marc Prewitt <mprewitt@dmja.com>
 	- fixed and cleaned up docs for init_code feature. now it is
 	  documented to work only with ST and GRT
 	- the string_data attribute for GRT now works and there is the
@@ -17,3 +17,12 @@ Revision history for Perl extension Sort::Maker.
 	  added tests for this 
 		-from  Marc Prewitt <mprewitt@dmja.com>
 	- made all appropriate tests support the -bench option
+
+0.03  Tue Feb  8 03:45:32 EST 2005
+	- fixed bug when using GRT and varying strings and ref_in.
+	  new test - ref_in_varying.t
+		-from Brad Baxter <bmb@Mail.Libs.UGA.EDU>
+	- fixed bug when using GRT and descending string sort with
+	  numeric data.
+	  new test - descending_grt_string.t
+		-from Brad Baxter <bmb@Mail.Libs.UGA.EDU>

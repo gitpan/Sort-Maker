@@ -8,6 +8,8 @@ t/simple.t
 t/arrays.t
 t/hashes.t
 t/io.t
+t/ref_in_varying.t
+t/descending_grt_string.t
 t/GRT.t
 t/numbers.t
 t/regex.t

@@ -47,6 +47,8 @@ sub test_driver {
 
 		$test->{data} ||= generate_data( $test ) ;
 
+#print Dumper $test->{data} ;
+
 		make_test_sorters( $test, $default_styles ) ;
 
 		run_tests( $test ) ;

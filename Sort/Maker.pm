@@ -8,7 +8,7 @@ use Data::Dumper ;
 %EXPORT_TAGS = ( 'all' => [ qw( sorter_source ), @EXPORT ] );
 @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 use strict;
 
@@ -538,6 +538,10 @@ sub _make_GRT_sort {
 
 	my $init_code = $options->{init_code} ;
 
+# select the input as a list - either an array ref or plain @_
+
+	my $input = $options->{ref_in} ? '@{$_[0]}' : '@_' ;
+
 # use this to count keys so we can generate init_code for each key
 
 	my $key_ind = '0' ;
@@ -556,7 +560,14 @@ sub _make_GRT_sort {
 		return unless $key_pack_format ;
 
 		$pack_format .= $key_pack_format ;
-		$init_code .= $key_init_code || '' ;
+
+		if ( $key_init_code ) {
+
+# fix generated init_code that scans input to use the proper input
+
+			$key_init_code =~ s/INPUT$/$input/m ;
+			$init_code .= $key_init_code ;
+		}
 
 		chomp( $grt_extract ) ;
 		push( @grt_extracts, $grt_extract ) ;
@@ -574,7 +585,6 @@ sub _make_GRT_sort {
 
 # handle the in/out as ref options
 
-	my $input = $options->{ref_in} ? '@{$_[0]}' : '@_' ;
 	my( $open_bracket, $close_bracket ) = $options->{ref_out} ?
 		qw( [ ] ) : ( '', '' ) ;
 
@@ -723,11 +733,12 @@ CODE
 	elsif ( $key->{varying} ) {
 
 # create the code to scan for the maximum length of the values for this key
+# the INPUT will be changed later to handle a list or a ref as input
 
 		$init_code = <<CODE ;
 	use List::Util qw( max ) ;
 	my \$len$key_ind = max(
-		map { my (\$val) = $key->{code} ; length \$val } \@_
+		map { my (\$val) = $key->{code} ; length \$val } INPUT
 	) ;
 CODE
 
@@ -753,7 +764,7 @@ ERR
 		$pack_format = 'Z*' ;
 	}
 
-	my $descend_code = $key->{descending} ? " ^ \$_xor$key_ind" : '' ;
+	my $descend_code = $key->{descending} ? " . '' ^ \$_xor$key_ind" : '' ;
 
 	my $grt_extract = <<CODE ;
 		do{ my( \$val ) = EXTRACT ; uc( \$val )$descend_code }
