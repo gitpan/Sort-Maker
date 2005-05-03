@@ -26,3 +26,12 @@ Revision history for Perl extension Sort::Maker.
 	  numeric data.
 	  new test - descending_grt_string.t
 		-from Brad Baxter <bmb@Mail.Libs.UGA.EDU>
+
+0.04  Wed Apr 27 01:37:00 EDT 2005
+	- fixed many doc typos and mistakes
+		-from Brad Baxter <bmb@Mail.Libs.UGA.EDU>
+	- fixed 'name' option bug, added test and docs
+		-from Damian Conway <damian@conway.org>
+	- added support for code refs as extraction code
+	  cleaned up the extraction code documentation
+		-from Damian Conway <damian@conway.org>

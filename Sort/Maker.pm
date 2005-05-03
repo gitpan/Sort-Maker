@@ -8,7 +8,7 @@ use Data::Dumper ;
 %EXPORT_TAGS = ( 'all' => [ qw( sorter_source ), @EXPORT ] );
 @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 use strict;
 
@@ -111,8 +111,6 @@ sub make_sorter {
 
 	return unless $keys ;
 
-#print Dumper $options, $keys ;
-
 	my $sort_maker = $sort_makers{ $options->{style} } ;
 
 	my $source = $sort_maker->( $options, $keys ) ;
@@ -144,7 +142,7 @@ ERR
 
 		my $package = (caller())[0] ;
 
-		*${"${package}::$name"} = $sorter ;
+		*{"${package}::$name"} = $sorter ;
 	}
 
 	return $sorter ;
@@ -157,8 +155,6 @@ sub _process_arguments {
 	while( @_ ) {
 
 		my $opt = shift ;
-
-#print "OPT $opt\n" ;
 
 		if ( $sort_makers{ $opt } ) {
 
@@ -267,14 +263,19 @@ sub _process_defaults {
 
 		return if _has_mutex_attrs( $key, 'key has' ) ;
 
-# default extract code is $_
+# # default extract code is $_
 
-		$key->{'code'} ||= '$_' ;
+# 		$key->{'code'} ||= '$_' ;
 
-		if( ref $key->{'code'} eq 'Regexp' ) {
+# 		if( ref $key->{'code'} eq 'Regexp' ) {
 
-			$key->{'code'} = "m($key->{'code'})" ;
-		}
+# 			$key->{'code'} = "m($key->{'code'})" ;
+# 		}
+
+# get the extraction code and return if any errors
+
+		$key->{'code'} = get_extractor_code( $key->{'code'} ) ;
+		return unless $key->{'code'} ;
 
 # set descending if it is not ascending and the default is descending.
 
@@ -302,6 +303,59 @@ sub _process_defaults {
 	}
 
 	return 1 ;
+}
+
+sub get_extractor_code {
+
+	my ( $extract_code ) = @_;
+
+# default extract code is $_
+
+	return '$_' unless $extract_code ;
+
+	my $extractor_type = ref $extract_code ;
+
+# wrap regexes in m() 
+
+	return "m($extract_code)" if $extractor_type eq 'Regexp' ;
+
+# return the extractor if it is a string
+
+	return $extract_code unless $extractor_type ;
+
+# return an error if it is not a CODE ref
+
+	unless( $extractor_type eq 'CODE' ) {
+
+		$@ = "$extract_code is not a CODE or Regexp reference" ;
+		return ;
+	}
+
+# Otherwise, try to decompile with B::Deparse...
+
+	unless( require B::Deparse ) {
+
+		$@ = <<ERR ;
+Can't use CODE as key extractor unless B::Deparse module installed
+ERR
+		return ;
+	}
+
+	my $deparser = B::Deparse->new("-p", "-sC");
+
+	my $source = eval { $deparser->coderef2text( $extract_code ) } ;
+
+	unless( $source ) {
+
+		$@ = "Can't use [$extract_code] as key extractor";
+		return ;
+	}
+
+#print "S [$source]\n" ;
+
+# Return just the juicy pulp inside the braces...
+
+	return "do $source" ;
 }
 
 # this is used to check for any mutually exclusive attribute in
@@ -831,7 +885,7 @@ the categories and their associated arguments.
 =head2 Sort Style
 
 The style of the sort to be made is selected by setting one of the
-following Boolean arguments. Only one must be set otherwise an error
+following Boolean arguments. Only one may be set otherwise an error
 is reported (see below for error handling). Also see below for
 detailed descriptions of the supported sort styles.
 
@@ -857,7 +911,7 @@ detailed descriptions of the supported sort styles.
 The following arguments set defaults for the all of the keys'
 attributes.  These default values can be overridden in any individual
 key.  Only one of the attributes in each of the groups below can be
-set as defaults or for any given key. If more than one attribute is
+set as defaults or for any given key. If more than one attribute in
 each group is set, then C<make_sorter> will return an error.  The
 attribute that is the default for each group is marked.  See below for
 details on key attributes.
@@ -865,8 +919,8 @@ details on key attributes.
 	ascending	(default)
 	descending
 
-	no_case		(default)
-	case
+	case		(default)
+	no_case
 
 	signed
 	unsigned
@@ -881,16 +935,21 @@ details on key attributes.
 These arguments set general options that apply to how the generated
 sorter interacts with the outside world.
 
-=head3 name
+=head3 C<name>
 
-This is a value option which set the name of the sorter sub. The sort
-sub will be created and exported to the caller's namespace with this
-name.
+This is a value option which exports the generated sort sub to that
+name. The call to C<make_sorter> must be run to install the named
+named function before it is called. You should still check the result
+of C<make_sorter> to see if an error occurred (it returns undef).
 
-	make_sorter( name => 'my_sorter', ... ) ;
-	@sorted = my_sorter @unsorted ;
+	my $sorter = make_sorter( name => 'sort_func', ... ) ;
+	die "make_sorter: $@" unless $sorter ;
 
-=head3 ref_in/ref_out
+	...
+
+	@sorted = sort_func @unsorted ;
+
+=head3 C<ref_in/ref_out>
 
 This boolean arguments specifies that the input to and output from the
 sort sub will be array references. C<ref_in> makes the sorter only
@@ -933,13 +992,13 @@ This value argument is code that will be put into the beginning of the
 generated sorter subroutine. It is meant to be used to declare lexical
 variables that the extraction code can use. Normally different
 extraction code have no way to share common code. By declaring
-lexicals with the C<init_code> option, then some key extraction code
+lexicals with the C<init_code> option, some key extraction code
 can save data there for use by another key. This is useful if you have
 two (or more) keys that share a complex piece of code such as
-accessing a deep value is a record tree.
+accessing a deep value in a record tree.
 
-For example if the input record is an array of arrays of hashes
-strings and the string has 2 keys that need to be grabbed by a
+For example, suppose the input record is an array of arrays of hashes
+of strings and the string has 2 keys that need to be grabbed by a
 regex. The string is a string key, a ':' and a number key. So the
 common part of the key extraction is:
 
@@ -955,9 +1014,9 @@ And the make_sorter call is:
 		number => '$num'
 	) ;
 
-In that code both keys are extracted in the first key extraction code
-and the number key is saved in C<$num>. The second key extraction code
-just uses that saved value.
+In the above code both keys are extracted in the first key extraction
+code and the number key is saved in C<$num>. The second key extraction
+code just uses that saved value.
 
 Note that C<init_code> is only useful in the ST and GRT sort styles as
 they process all the keys of a record at one time and can use
@@ -979,16 +1038,16 @@ get compared are called its keys. In the simplest case the entire
 record is the key, as when you sort a list of numbers or file
 names. But in many cases the keys are embedded in the full record and
 they need to be extracted before they can be used in comparisons.
-Sort::Maker uses key descriptions that denote the from the record, and
-optional other attributes that will help optimize the sorting
-operation. This section will explain how to pass key description
-arguments to the make_sorter subroutine and what the various
-attributes mean and how to best use them.
+Sort::Maker uses key descriptions that extract the key from the
+record, and optional other attributes that will help optimize the
+sorting operation. This section will explain how to pass key
+description arguments to the make_sorter subroutine and what the
+various attributes mean and how to best use them.
 
 The generated sorter will sort the records according to the order of
-the key arguments. The first key is used to compare a pair records and
-if are deemed equal, then the next key is examined. This happens until
-the records are given an ordering or you run out of keys and the
+the key arguments. The first key is used to compare a pair of records
+and if they are deemed equal, then the next key is examined. This happens
+until the records are given an ordering or you run out of keys and the
 records are deemed equal in sort order.  Key descriptions can be mixed
 with the other arguments which can appear in any order and anywhere in
 the argument list, but the keys themselves must be in the desired
@@ -1004,7 +1063,7 @@ There are 4 ways to provide attributes to a key:
 
 =head3 No attributes
 
-A key argument which is either at end of the argument list or is
+A key argument which is either at the end of the argument list or is
 followed by a valid keyword token has no explict attributes. This key
 will use the default attributes.  In both of these examples, a default
 attribute was set and used by the key description which is just a
@@ -1075,7 +1134,7 @@ value.
 		number => {
 			code => '/(\d+)/',
 			descending => 1,
-		],
+		},
 	) ;
 
 	# a multi-key sort. the first key is a descending unsigned
@@ -1097,18 +1156,19 @@ value.
 =head2 Key Description Attributes
 
 What follows are the attributes for key descriptions. Most use 
-the default values passes in the arguments to C<make_sorter>.
+the default values passed in the arguments to C<make_sorter>.
 
-=head3 code
+=head3 C<code>
 
 This value attribute is the code that will be used to extract a key
-from the input record. It must be a string of Perl code that operates
-on $_ and extracts a value.  The code will be wrapped in a do{} block
-and called in a list context so that regular expressions can just use
-() to grab a key value. The code defaults to C<$_> which means the
-entire record is used for this key. You can't set the default for code
-(unlike all the other key attributes). See the section on Extraction
-Code for more.
+from the input record. It can be a string of Perl code, a qr// regular
+expression (Regexp reference) or an anonymous sub (CODE reference)
+that operates on $_ and extracts a value.  The code will be wrapped in
+a do{} block and called in a list context so that regular expressions
+can just use () to grab a key value. The code defaults to C<$_> which
+means the entire record is used for this key. You can't set the
+default for code (unlike all the other key attributes). See the
+section on Extraction Code for more.
 
 	# make an ST sort of the first number grabbed in descending order
 
@@ -1120,7 +1180,7 @@ Code for more.
 		},
 	) ;
 
-=head3 ascending/descending
+=head3 C<ascending/descending>
 
 These two Boolean attributes control the sorting order for this
 key. If a key is marked as C<ascending> (which is the initial default
@@ -1136,7 +1196,7 @@ keys. It is illegal to have both set in the defaults or in any key.
 		number => {
 			code	=> '/(\d+)/',
 		},
-		number => {
+		string => {
 			code	=> '/<(\w+)>/',
 			ascending => 1,
 		},
@@ -1165,9 +1225,9 @@ keys. It is illegal to have both set in the defaults or in any key.
 		},
 	) ;
 
-=head3 case/no_case
+=head3 C<case/no_case>
 
-These two Boolean attributes control the how 'string' keys handle case
+These two Boolean attributes control how 'string' keys handle case
 sensitivity. If a key is marked as C<case> (which is the initial
 default for all keys), then keys will treat upper and lower case
 letters as different.  If the key is marked as C<no_case> then they
@@ -1199,14 +1259,6 @@ locale settings to affect string sorts.
 		},
 	) ;
 
-	my $sorter = make_sorter(
-		qw( ST ascending descending ),
-		number => {
-			code	=> '/(\d+)/',
-			descending => 1,
-		},
-	) ;
-
 	# this will return undef and store an error in $@. 
 	# you can't have both 'case' and 'no_case' in a key
 
@@ -1219,7 +1271,7 @@ locale settings to affect string sorts.
 		},
 	) ;
 
-=head3 signed/unsigned/signed_float/unsigned_float (GRT only)
+=head3 C<signed/unsigned/signed_float/unsigned_float> (GRT only)
 
 These Boolean attributes are only used by the GRT sort style. They are
 meant to describe the type of a number key so that the GRT can best
@@ -1240,7 +1292,7 @@ restricted to non-negative values. The C<signed_float> attribute is
 supported to allow overriding defaults and to make it easier to
 auto-generate sorts.
 
-=head3 fixed/varying (GRT only)
+=head3 C<fixed/varying> (GRT only)
 
 These attributes are only used by the GRT sort style. They are used
 to describe the type of a string key so that the GRT can properly
@@ -1251,32 +1303,46 @@ sorting for more.
 C<fixed> is a value attribute that marks this string key as always
 being this length. The extracted value will either be padded with null
 (0x0) bytes or truncated to the specified length (the value of
-C<fixed>. The data in this key can have embedded null bytes (0x0) and
-also it can be sorted in descending order.
+C<fixed>). The data in this key may have embedded null bytes (0x0) and
+may be sorted in descending order.
 
 C<varying> is a Boolean attribute marks this string key as being of
 varying lengths. The GRT sorter will do a scan of all of this key's
 values to find the maximum string length and then it pads all the
-extracted values to that length. The data in this key can have
-embedded null bytes (0x0) and also it can be sorted in descending
-order. 
+extracted values to that length. The data in this key may have
+embedded null bytes (0x0) and may be sorted in descending order.
 
 =head2 Key Extraction Code
 
-Each input record must have its sort keys extracted from the data. This
-is the purpose of the 'code' attribute in key descriptions. The code
-must be a single string which operates on a record which is in C<$> and
-it must return the key value. The code is executed in a list context so
-you can use grabs in m// to return the key. Note that only the first
-grab will be used but you shouldn't have more than one anyway. See the
-examples below.
+Each input record must have its sort keys extracted from the data.
+This is the purpose of the 'code' attribute in key descriptions.  The
+code has to operate on a record which is in C<$_> and it must return
+the key value. The code is executed in a list context so you can use
+grabs in m// to return the key. Note that only the first grab will be
+used but you shouldn't have more than one anyway. See the examples
+below.
 
-Code can be either a string or a qr// (Regexp) object. If qr// is
-used, the actual generated code will be m($qr) which works because
-qr// will interpolate to its string representation. The advantage of
-qr// over a string is that the qr// will be syntax checked at compile
-time while the string only later when the generated sorter is compiled
-by an eval.
+Code can be either a string, a qr// object (Regexp reference) or an
+anonymous sub (CODE reference).
+
+If qr// is used, the actual generated code will be m($qr) which works
+because qr// will interpolate to its string representation. The
+advantage of qr// over a string is that the qr// will be syntax
+checked at compile time while the string only later when the generated
+sorter is compiled by an eval.
+
+If a CODE reference is used, then the B::Deparse module is used to
+deparse it back into Perl source. This source is then used to extract
+the key in the generated sorter. As with qr//, the advantage is that
+the extraction code is syntax checked at compile time and not
+runtime. Also the deparsed code is wrapped in a C<do{}> block so you
+may use complex code to extract the key.
+
+The following will generate the exact same sorter:
+
+	$sorter = make_sorter( 'ST', string => '/(\w+)/' ) ;
+	$sorter = make_sorter( 'ST', string => qr/(\w+)/ ) ;
+	$sorter = make_sorter( 'ST', string => sub { /(\w+)/ } ) ;
 
 Extraction code for a key can be set in one of three ways.
 
@@ -1293,7 +1359,7 @@ simple sorts where you are sorting the entire record.
 	my $sorter = make_sorter( qw( plain no_case string ) ;
 
 	# sort by file time stamp and then by name
-	my $sorter = make_sorter( 'ST', number => -M, 'string' ) ;
+	my $sorter = make_sorter( 'ST', number => '-M', 'string' ) ;
 
 =head3 Code is the only key attribute
 
@@ -1379,13 +1445,13 @@ the style. Then call sorter_source (not exported by default) and pass it
 the sort code reference returned by make_sorter. It will return the
 generated sort source.
 
-=head2 plain
+=head2 C<plain>
 
 Plain sorting doesn't do any key caching. It is fine for short input
 lists (see the Benchmark section) and also as a way to see how much CPU
 is saved when using one of the other styles.
 
-=head2 orcish
+=head2 C<orcish>
 
 The Orcish maneuvre (created by Joseph Hall) caches the extracted keys
 in a hash. It does this with code like this:
@@ -1398,11 +1464,11 @@ never seen this record before then the cache entry will be undef and the
 time this record is seen in a comparison, the saved extracted key will
 be found in the hash and used. The name orcish comes from OR-cache.
 
-=head2 ST
+=head2 C<ST>
 
 The ST (Schwartzian Transform and popularized by Randal Schwartz) uses
-an anonymous array to store the record and its extracted keys. It first
-execute a map that creates an anonymous array:
+an anonymous array to store the record and its extracted keys. It
+first executes a map that creates an anonymous array:
 
 	map [ $_, CODE1( $_ ), CODE2( $_ ) ], @input
 
@@ -1423,7 +1489,7 @@ slot of the anonymous array:
 
 This is why the ST is known as a map/sort/map technique.
 
-=head2 GRT
+=head2 C<GRT>
 
 The Guttman-Rosler Transform (popularized by Uri Guttman and Larry
 Rosler) uses a string to cache the extracted keys as well as either
@@ -1439,8 +1505,6 @@ efficiently pack the sort keys into a single string. The following
 lists the GRT key attributes, when you need them and what key
 processing is done for each.  Note that you can always enable the GRT
 specific attributes as they are just ignored by the other sort styles.
-
-=head2 GRT
 
 The GRT gains its speed by using a single byte string to cache all of
 the extracted keys from a given input record. Packing keys into a
@@ -1466,7 +1530,7 @@ If you want this key to sort in descending order, then the key value is
 negated and normalized (see the 'signed' attribute) so there is no
 advantage to using 'unsigned'.
 
-=head3 signed
+=head3 C<signed>
 
 The 'signed' Boolean attribute tells the GRT that this number key is
 an integer. This allows the GRT to just pack it into 4 bytes using the
@@ -1477,10 +1541,10 @@ the sign (highest order) bit of the integer. As mentioned above, when
 sorting this key in descending order, the GRT just negates the key
 value.
 
-NOTE: In the GRT the signed and unsigned integer attributes only work on
-perl built with 32 bit integers. This is due to using the N format of
-pack with is specified to be 32 bits. A future version may support 64
-bit integers (anyone want to help?).
+NOTE: In the GRT the signed and unsigned integer attributes only work
+on perl built with 32 bit integers. This is due to using the N format
+of pack which is specified to be 32 bits. A future version may support
+64 bit integers (anyone want to help?).
 
 =head3 C<unsigned_float>
 
@@ -1509,13 +1573,13 @@ others have no restriction on float formats).
 =head3 simple string.
 
 If a string key is being sorted in ascending order with the GRT and it
-doesn't have one of the GRT string attributes, it will be packed without
-any munging and a null (0x0) byte will be appended to it. This byte
-enables a shorter string to sort before longer ones that starts with the
-shorter string.
+doesn't have one of the GRT string attributes, it will be packed
+without any munging and a null (0x0) byte will be appended to it. This
+byte enables a shorter string to sort before longer ones that start
+with the shorter string.
 
 NOTE: You cannot sort strings in descending order in the GRT unless
-the key has either the 'fixed' or 'varying' attributes set. Also if a
+the key has either the 'fixed' or 'varying' attributes set. Also, if a
 string is being sorted in ascending order but has any null (0x0) bytes
 in it, the key must have one of those attributes set.
 
@@ -1526,8 +1590,8 @@ length string. The extracted value will either be padded with null
 (0x0) bytes or truncated to the specified length (the value of the
 C<fixed> attribute). This means it can be packed into the cache string
 with no padding and no trailing null byte is needed. The key can
-contain any data including null (0x0) bytes. The only data munging
-happens if the key's sort order is descending. Then the key value is
+contain any data including null (0x0) bytes. Data munging
+happens only if the key's sort order is descending. Then the key value is
 xor'ed with a same length string of 0xff bytes. This toggles each bit
 which allows for a lexical comparison but in the reverse order. This
 same bit inversion is used for descending varying strings.
@@ -1565,7 +1629,7 @@ If all you want is the generated source you can just do:
 When C<make_sorter> detects an error (either bad arguments or when the
 generated sorter won't compile), it returns undef and set $@ to an
 error message. The error message will include the generated source and
-compiler and warning errors if the sorted didn't compile correctly.
+compiler and warning errors if the sorter didn't compile correctly.
 The test t/errors.t covers all the possible error messages.  You can
 also retrieve the generated source after a compiling error by calling
 C<sorter_source>.
@@ -1573,13 +1637,13 @@ C<sorter_source>.
 =head1 TESTS
 
 C<Sort::Maker> uses a table of test configurations that can both run
-tests and benchmarks. Each test script is mostly a table that generate
-multiple versions of the sorters, generate sample data and compare the
-sorter results with a sort that is known to be good. If you run the
-scripts directly and with a -bench argument, then they generate the
-same sorter subs and benchmark them. This design ensures that
-benchmarks are running on correctly generated code and it makes it
-very easy to add more test and benchmark variations. The code that
+tests and benchmarks. Each test script is mostly a table that
+generates multiple versions of the sorters, generate sample data and
+compares the sorter results with a sort that is known to be good. If
+you run the scripts directly and with a -bench argument, then they
+generate the same sorter subs and benchmark them. This design ensures
+that benchmarks are running on correctly generated code and it makes
+it very easy to add more test and benchmark variations. The code that
 does all the work is in t/common.pl. Here is a typical test table
 entry:
 
@@ -1604,13 +1668,13 @@ entry:
 C<skip> is a boolean that causes this test/benchmark to be skipped.
 Setting C<source> causes the sorter's source to be printed out.
 C<gen> is a sub that generates a single input record. There are
-supports subs in t/common.pl that will generate random data. Some
-tests have a C<data> field which is fixed data for a test (instead of
-the generated data). The <gold> field is a comparision subroutine
-usable by the sort function. It is used to sort the test data into a
-golden result which is used to compare against all the generated
-sorters. C<args> is an anonmyous of arguments for a sorter or a hash
-ref with multiple named/args pairs. See t/io.t for an example of that.
+support subs in t/common.pl that will generate random data. Some tests
+have a C<data> field which is fixed data for a test (instead of the
+generated data). The <gold> field is a comparision subroutine usable
+by the sort function. It is used to sort the test data into a golden
+result which is used to compare against all the generated sorters.
+C<args> is an anonymous array of arguments for a sorter or a hash ref
+with multiple named/args pairs. See t/io.t for an example of that.
 
 =head1 BENCHMARKS
 
@@ -1625,7 +1689,7 @@ Sort::Maker GRT currently works only with 32 bit integers due to pack
 N format being exactly 32 bits. If someone with a 64 bit Perl wants to
 work on using the Q format or the ! suffix and dealing with endian
 issues, I will be glad to help and support it. It would be best if
-there was a netowork (big endian) pack format for quads/longlongs but
+there was a network (big endian) pack format for quads/longlongs but
 that can be done similarly to how floats are packed now.
 
 =head1 AUTHOR
