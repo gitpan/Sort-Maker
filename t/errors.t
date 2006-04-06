@@ -2,7 +2,7 @@
 
 use strict ;
 
-use Test::More tests => 11 ;
+use Test::More tests => 13 ;
 use Carp ;
 
 BEGIN{ 
@@ -40,3 +40,36 @@ ok( !defined $err && $@ =~ /compile/i, 'illegal code' ) ;
 
 $err = make_sorter( qw( GRT string descending ) ) ;
 ok( !defined $err && $@ =~ /descending string/i, 'GRT descending string' ) ;
+
+$err = make_sorter(
+	qw(
+		ref_in
+		ref_out
+		ST
+	),
+	number => [
+		qw(
+			descending
+			unsigned_float
+		),
+		'code',
+	],
+) ;
+ok( !defined $err && $@ =~ /No value/, 'array args - no value' ) ;
+
+$err = make_sorter(
+	qw(
+		ST
+	),
+	number => [
+		qw(
+			descending
+			unsigned_float
+		),
+		'foobar',
+	],
+) ;
+ok( !defined $err && $@ =~ /Unknown attribute/,
+	'array args - unknown attribute' ) ;
+
+

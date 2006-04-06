@@ -8,7 +8,7 @@ use Data::Dumper ;
 %EXPORT_TAGS = ( 'all' => [ qw( sorter_source ), @EXPORT ] );
 @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-$VERSION = '0.04';
+$VERSION = '0.05';
 
 use strict;
 
@@ -209,7 +209,7 @@ sub _process_arguments {
 
 			if( ref $key_desc eq 'HASH' ) {
 
-				shift ;
+				shift @_ ;
 				$key_desc->{type} = $opt ;
 				push( @keys, $key_desc ) ;
 				next ;
@@ -217,11 +217,11 @@ sub _process_arguments {
 
 			if( ref $key_desc eq 'ARRAY' ) {
 
-				my $desc = _process_array_attrs(@{$key_desc}) ;
-				return unless $desc ;
+				$key_desc = _process_array_attrs(@{$key_desc}) ;
+				return unless $key_desc ;
 
-				$desc->{type} = $opt ;
-
+				shift @_ ;
+				$key_desc->{type} = $opt ;
 				push( @keys, $key_desc ) ;
 				next ;
 			}
@@ -392,7 +392,6 @@ sub _process_array_attrs {
 
 		if ( $is_boolean_attr{ $attr } ) {
 
-# handle boolean => 1
 			shift @attrs if $attrs[0] eq '1' ;
 			$desc->{ $attr } = 1 ;
 			next ;
@@ -401,9 +400,9 @@ sub _process_array_attrs {
 		if ( $is_value_attr{ $attr } ) {
 
 			$@ = "make_sorter: No value for attribute '$attr'",
-				return unless @_ ;
+				return unless @attrs ;
 
-			$desc->{ $attr } = shift ;
+			$desc->{ $attr } = shift @attrs ;
 			next ;
 		}
 
