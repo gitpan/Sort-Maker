@@ -1,5 +1,19 @@
 Revision history for Perl extension Sort::Maker.
 
+0.06  Fri Dec 29 00:47:00 EST 2006
+	- renamed t/common.pl to t/common.pm
+	- added support for error tests in t/common.pm
+	- rewrote t/error.t to use test table and common.pm
+	- created proper README file
+	- fixed doc bug (removed 'style =>')
+		-from Mumia W.. <paduille.4060.mumia.w@earthlink.net>
+	- added t/closure.t
+		-initial code from Mumia W..
+		 <paduille.4060.mumia.w@earthlink.net>
+	- added support for closures for key extraction
+		-idea and initial code and pod from Mumia W..
+		 <paduille.4060.mumia.w@earthlink.net>
+
 0.05  Thu Apr  6 03:15:09 EDT 2006
 	- fixed parsing array ref key description
 	- added 2 tests to t/error.t

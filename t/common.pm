@@ -26,6 +26,8 @@ sub test_driver {
 
 	my( $sort_tests, $default_styles ) = @_ ;
 
+	$default_styles ||= [] ;
+
 	my $total_tests = count_tests( $sort_tests, $default_styles ) ;
 
 	plan tests => $total_tests ;
@@ -34,10 +36,6 @@ sub test_driver {
 
 		if ( $test->{skip} ) {
 
-########
-# calc number of sorts in this test
-########
-
 			SKIP: {
 				skip( "sort of $test->{name}\n",
 					$test->{count} ) ;
@@ -45,13 +43,41 @@ sub test_driver {
 			next ;
 		}
 
+		make_test_sorters( $test, $default_styles ) ;
+
+		if ( $test->{error} ) {
+
+			handle_errors( $test ) ;
+			next ;
+		}
+
 		$test->{data} ||= generate_data( $test ) ;
 
 #print Dumper $test->{data} ;
 
-		make_test_sorters( $test, $default_styles ) ;
-
 		run_tests( $test ) ;
+	}
+}
+
+sub handle_errors {
+
+	my( $test ) = @_ ;
+
+	foreach my $sort_name ( sort test_name_cmp keys %{$test->{sorters}} ) {
+
+#print "NAME $sort_name\n" ;
+		if ( my $error = $test->{make_error}{$sort_name} ) {
+
+			if ( $test->{error} && $error =~ /$test->{error}/ ) {
+
+				ok( 1, "$sort_name sort of $test->{name}" ) ;
+			}
+			else {
+
+				ok( 0, "$sort_name sort of $test->{name}" ) ;
+				print "unexpected error:\n$@\n" ;
+			}
+		}
 	}
 }
 
@@ -163,7 +189,9 @@ sub make_test_sorters {
 
 	my $styles = $test->{styles} || $default_styles ;
 
-#print "@{$styles}\n" ;
+# if no styles, we need a dummy style just to force the style loop
+
+	$styles = [ qw(NO_STYLE) ] unless @{$styles} ;
 
 	my $suffix = ( $test->{ref_in} ? '_RI' : '' ) .
 		     ( $test->{ref_out} ? '_RO' : '' ) ;
@@ -178,11 +206,28 @@ sub make_test_sorters {
 		foreach my $style ( @{$styles} ) {
 
 			my $sort_name = $arg_name ?
-				"${style}_$arg_name" : $style . $suffix ;
+				"${style}_$arg_name" : "$style$suffix" ;
 
-			my $sorter = make_sorter( $style, @{$test_args} ) ;
+# if no real styles, use an empty list for them
 
-			die "$@\n" unless $sorter ;
+			my @style_args = $style eq 'NO_STYLE' ? () : $style ;
+
+			my $sorter = make_sorter( @style_args, @{$test_args} ) ;
+
+#print "sorter [$sorter]\n" ;
+#print sorter_source( $sorter ) ;
+
+
+#print "SOURCE $test->{source}\n" ;
+
+			unless( $sorter ) {
+
+#print "SORT $sort_name [$@]\n" ;
+
+				$test->{make_error}{$sort_name} = $@ ;
+				$test->{sorters}{$sort_name} = 'NONE' ;
+				next ;
+			}
 
 			print "Source of $sort_name $test->{name} is:\n",
 				sorter_source( $sorter ) if $test->{source} ;
@@ -190,6 +235,10 @@ sub make_test_sorters {
 			$test->{sorters}{$sort_name} = $sorter ;
 		}
 	}
+
+# all sorters built ok
+
+	return 1 ;
 }
 
 sub count_tests {
@@ -200,7 +249,7 @@ sub count_tests {
 
 	foreach my $test ( @{$tests} ) {
 
-		my $style_count = @{ $test->{styles} || $default_styles };
+		my $style_count = @{ $test->{styles} || $default_styles } || 1 ;
 
 		my $arg_sets_count = ref $test->{args} eq 'ARRAY' ?
 			1 : keys %{$test->{args}} ;

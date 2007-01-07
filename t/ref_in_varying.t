@@ -4,7 +4,7 @@ use strict ;
 
 use lib 't' ;
 use lib '..' ;
-require 'common.pl' ;
+require 'common.pm' ;
 
 use vars qw( $a $b ) ;
 

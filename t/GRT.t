@@ -4,7 +4,7 @@ use strict ;
 
 use lib 't' ;
 use lib '..' ;
-require 'common.pl' ;
+require 'common.pm' ;
 
 my @sort_styles = qw( GRT ) ;
 

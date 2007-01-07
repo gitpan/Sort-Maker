@@ -1,75 +1,142 @@
-#!/usr/local/bin/perl -w
+#!/usr/local/bin/perl
 
 use strict ;
+use warnings ;
 
-use Test::More tests => 13 ;
-use Carp ;
+use lib 't' ;
+use lib '..' ;
+require 'common.pm' ;
 
-BEGIN{ 
+my $sort_tests = [
 
-	use_ok( 'Sort::Maker', ':all' ) ;
-}
+	{
+		name	=> 'unknown option',
+		args	=> {
+			unknown => [ qw( xxx ), ],
+		},
+		error	=> qr/unknown/i,
+	},
 
-ok( defined \&make_sorter, 'export' ) ;
+	{
+		name	=> 'no keys',
+		styles	=> [ qw( plain ) ],
+		args	=> {
+			no_keys => [],
+		},
+		error	=> qr/no keys/i,
+	},
 
-my $err ;
+	{
+		name	=> 'duplicate style',
+		args	=> {
+			dup_style => [qw( GRT ST ) ],
+		},
+		error	=> qr/style was already set/i,
+	},
 
-$err = make_sorter( qw( xxx ) ) ;
-ok( !defined $err && $@ =~ /unknown/i, 'unknown option' ) ;
+	{
+		name	=> 'no value',
+		args	=> {
+			no_value => [ qw( name ) ],
+		},
+		error	=> qr/no value/i,
+	},
+	{
+		name	=> 'no style',
+		args	=> {
+			no_style => [ qw( string ) ],
+		},
+		error	=> qr/no sort style/i,
+	},
 
-$err = make_sorter( ) ;
-ok( !defined $err && $@ =~ /no keys/i, 'no keys' ) ;
+	{
+		name	=> 'ascending and descending',
+		styles	=> [ qw( plain ) ],
+		args	=> {
+			up_and_down => [
+				string => {
+					ascending	=> 1,
+					descending	=> 1,
+				},
+			],
+		},
+		error	=> qr/has ascending/i,
+	},
 
-$err = make_sorter( qw( ST GRT ) ) ;
-ok( !defined $err && $@ =~ /style was already set/i, 'duplicate style' ) ;
+	{
+		name	=> 'case and no case',
+		styles	=> [ qw( plain ) ],
+		args	=> {
+			up_and_down => [
+				string => {
+					case	=> 1,
+					no_case => 1,
+				},
+			],
+		},
+		error	=> qr/has case/,
+	},
 
-$err = make_sorter( qw( name ) ) ;
-ok( !defined $err && $@ =~ /no value/i, 'no value' ) ;
+	{
+		name	=> 'illegal code',
+		styles	=> [ qw( plain ) ],
+		args	=> {
+			illegal	=> [
+				string => 'XXX',
+			],
+		},
+		error	=> qr/compile/,
+	},
 
-$err = make_sorter( qw( no_case string ) ) ;
-ok( !defined $err && $@ =~ /no sort style/i, 'no style' ) ;
+	{
+		name	=> 'GRT descending string',
+		styles	=> [ qw( GRT ) ],
+		args	=> {
+			GRT	=> [
+				qw( string descending )
+			],
+		},
+		error	=> qr/descending string/,
+	},
 
-$err = make_sorter( 'plain', string => { ascending => 1, descending => 1 } ) ;
-ok( !defined $err && $@ =~ /has ascending/i, 'ascending and descending' ) ;
+	{
+		name	=> 'array args - no value',
+		styles	=> [ qw( ST ) ],
+		args	=> {
+			array => [
+				qw( ref_in ref_out ),
+				number => [
+					qw(
+						descending
+						unsigned_float
+					),
+					'code',
+				],
+			],
+		},
+		error	=> qr/No value/i, 
+	},
 
-$err = make_sorter( 'plain', string => { case => 1, no_case => 1 } ) ;
-ok( !defined $err && $@ =~ /has case/i, 'case and no_case' ) ;
+	{
+		name	=> 'array args - unknown attribute',
+		styles	=> [ qw( ST ) ],
+		args	=> {
+			array => [
 
-$err = make_sorter( 'plain', string => 'XXX' ) ;
-ok( !defined $err && $@ =~ /compile/i, 'illegal code' ) ;
+				number => [
+					qw(
+						descending
+						unsigned_float
+					),
+					'foobar',
+				],
+			],
+		},
+		error	=> qr/Unknown attribute/,
+	},
 
-$err = make_sorter( qw( GRT string descending ) ) ;
-ok( !defined $err && $@ =~ /descending string/i, 'GRT descending string' ) ;
+] ;
 
-$err = make_sorter(
-	qw(
-		ref_in
-		ref_out
-		ST
-	),
-	number => [
-		qw(
-			descending
-			unsigned_float
-		),
-		'code',
-	],
-) ;
-ok( !defined $err && $@ =~ /No value/, 'array args - no value' ) ;
+common_driver( $sort_tests ) ;
 
-$err = make_sorter(
-	qw(
-		ST
-	),
-	number => [
-		qw(
-			descending
-			unsigned_float
-		),
-		'foobar',
-	],
-) ;
-ok( !defined $err && $@ =~ /Unknown attribute/,
-	'array args - unknown attribute' ) ;
-
-
+exit ;

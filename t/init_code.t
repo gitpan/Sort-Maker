@@ -4,7 +4,7 @@ use strict ;
 
 use lib 't' ;
 use lib '..' ;
-require 'common.pl' ;
+require 'common.pm' ;
 
 my @sort_styles = qw( ST GRT ) ;
 
@@ -28,7 +28,8 @@ my $sort_tests = [
 		args	=> {
 			init_code => [
 				init_code => 'my( $str, $num ) ;',
-				string => 'do{( $str, $num ) = /^(\w+):(\d+)$/; $str}',
+				string =>
+				  'do{( $str, $num ) = /^(\w+):(\d+)$/; $str}',
 				number => '$num',
 			],
 			no_init => [

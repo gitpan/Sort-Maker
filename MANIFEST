@@ -17,7 +17,8 @@ t/init_code.t
 t/string_data.t
 t/name.t
 t/code.t
+t/closure.t
 t/bad_code.t
-t/common.pl
+t/common.pm
 META.yml                                 Module meta-data (added by MakeMaker)
 slides/sort_maker.txt

@@ -1,16 +1,16 @@
 package Sort::Maker;
 
+use strict;
 use base qw(Exporter);
 
 use Data::Dumper ;
 
-@EXPORT = qw( make_sorter );
-%EXPORT_TAGS = ( 'all' => [ qw( sorter_source ), @EXPORT ] );
-@EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
+our @EXPORT = qw( make_sorter );
+our %EXPORT_TAGS = ( 'all' => [ qw( sorter_source ), @EXPORT ] );
+our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-$VERSION = '0.05';
+our $VERSION = '0.06';
 
-use strict;
 
 # get integer and float sizes endian order
 
@@ -29,6 +29,7 @@ my @boolean_attrs = qw(
 	signed_float
 	unsigned_float
 	varying
+	closure
 ) ;
 
 my @value_attrs = qw(
@@ -102,27 +103,42 @@ my %sources ;
 
 my $eval_warnings = '' ;
 
-
 sub make_sorter {
 
-# process @_ without copying it
+# clear any leftover errors
 
-	my( $options, $keys ) = &_process_arguments ;
+	$@ = '' ;
 
+# process @_ without copying it (&sub with no args)
+
+	my( $options, $keys, $closures ) = &_process_arguments ;
 	return unless $keys ;
 
+	my @closures = _get_extractor_code( $options, $keys ) ;
+
+	return if $@ ;
+
+# get the sort maker for this style and build the sorter
+
 	my $sort_maker = $sort_makers{ $options->{style} } ;
-
 	my $source = $sort_maker->( $options, $keys ) ;
-
 	return unless $source ;
 
-	my $sorter ;
+# prepend code to access any closures 
 
-	{
-		local( $SIG{__WARN__} ) = sub { $eval_warnings .= $_[0] } ;
-		$sorter = eval $source ;
+	if ( @closures ) {
+
+		my $closure_text = join '', map <<CLOSURE, 0 .. $#closures ;
+my \$closure$_ = \$closures[$_] ;
+CLOSURE
+
+		$source = "use strict ;\n$closure_text\n$source" ;
 	}
+
+	my $sorter = do {
+		local( $SIG{__WARN__} ) = sub { $eval_warnings .= $_[0] } ;
+		eval $source ;
+	} ;
 
 	$sources{ $sorter || '' } = $source ;
 
@@ -135,6 +151,8 @@ $source
 $eval_warnings
 $@
 ERR
+
+# install the sorter sub in the caller's package if a name was set
 
 	if ( my $name = $options->{name} ) {
 
@@ -158,8 +176,6 @@ sub _process_arguments {
 
 		if ( $sort_makers{ $opt } ) {
 
-#print "style\n" ;
-	
 			$@ = 
 		"make_sorter: Style was already set to '$options{ style }'",
 				return if $options{ style } ;
@@ -205,7 +221,7 @@ sub _process_arguments {
 				next ;
 			}
 
-# if we have a hash value, it is the description for this key
+# if we have a hash ref for the value, it is the description for this key
 
 			if( ref $key_desc eq 'HASH' ) {
 
@@ -214,6 +230,8 @@ sub _process_arguments {
 				push( @keys, $key_desc ) ;
 				next ;
 			}
+
+# if we have an array ref for the value, it is the description for this key
 
 			if( ref $key_desc eq 'ARRAY' ) {
 
@@ -241,10 +259,15 @@ sub _process_arguments {
 		return ;
 	}
 
-	$@ = "make_sorter: No keys specified", return
-		unless @keys ;	
-	$@ = "make_sorter: No sort style selected", return
-		unless $options{style} ;
+	unless( @keys ) {
+		$@ = 'make_sorter: No keys specified' ;
+		return ;
+	}
+		
+	unless( $options{style} ) {
+		$@ = 'make_sorter: No sort style selected' ;
+		return ;
+	}
 
 	return unless _process_defaults( \%options, \@keys ) ;
 
@@ -262,20 +285,6 @@ sub _process_defaults {
 	foreach my $key ( @{$keys} ) {
 
 		return if _has_mutex_attrs( $key, 'key has' ) ;
-
-# # default extract code is $_
-
-# 		$key->{'code'} ||= '$_' ;
-
-# 		if( ref $key->{'code'} eq 'Regexp' ) {
-
-# 			$key->{'code'} = "m($key->{'code'})" ;
-# 		}
-
-# get the extraction code and return if any errors
-
-		$key->{'code'} = get_extractor_code( $key->{'code'} ) ;
-		return unless $key->{'code'} ;
 
 # set descending if it is not ascending and the default is descending.
 
@@ -305,58 +314,95 @@ sub _process_defaults {
 	return 1 ;
 }
 
-sub get_extractor_code {
 
-	my ( $extract_code ) = @_;
+sub _get_extractor_code {
+
+	my( $opts, $keys ) = @_ ;
+
+	my( @closures, $deparser ) ;
+
+	foreach my $key ( @{$keys} ) {
+
+		my $extract_code = $key->{code} ;
 
 # default extract code is $_
 
-	return '$_' unless $extract_code ;
+		unless( $extract_code ) {
 
-	my $extractor_type = ref $extract_code ;
+			$key->{code} = '$_' ;
+			next ;
+		}
+
+		my $extractor_type = ref $extract_code ;
+
+# leave the extractor code alone if it is a string
+
+		next unless $extractor_type ;
 
 # wrap regexes in m() 
 
-	return "m($extract_code)" if $extractor_type eq 'Regexp' ;
+		if( $extractor_type eq 'Regexp' ) {
 
-# return the extractor if it is a string
-
-	return $extract_code unless $extractor_type ;
+			$key->{code} = "m($extract_code)" ;
+			next ;
+		}
 
 # return an error if it is not a CODE ref
 
-	unless( $extractor_type eq 'CODE' ) {
+		unless( $extractor_type eq 'CODE' ) {
 
-		$@ = "$extract_code is not a CODE or Regexp reference" ;
-		return ;
-	}
+			$@ = "$extract_code is not a CODE or Regexp reference" ;
+			return ;
+		}
 
-# Otherwise, try to decompile with B::Deparse...
+# must be a code reference
+# see if it is a closure
 
-	unless( require B::Deparse ) {
+		if ( $opts->{closure} || $key->{closure} ) {
 
-		$@ = <<ERR ;
+# generate the code that will call this closure
+
+			my $n = @closures ;
+			$key->{code} = "\$closure$n->()" ;
+
+#print "CODE $key->{code}\n" ;
+
+# copy the closure so we can process them later
+
+			push @closures, $extract_code ;
+			next ;
+		}
+
+# Otherwise, try to decompile the code ref with B::Deparse...
+
+		unless( require B::Deparse ) {
+
+			$@ = <<ERR ;
 Can't use CODE as key extractor unless B::Deparse module installed
 ERR
-		return ;
+			return ;
+		}
+
+		$deparser ||= B::Deparse->new("-p", "-sC");
+
+		my $source = eval { $deparser->coderef2text( $extract_code ) } ;
+
+		unless( $source ) {
+
+			$@ = "Can't use [$extract_code] as key extractor";
+			return ;
+		}
+
+	#print "S [$source]\n" ;
+
+# use just the juicy pulp inside the braces...
+
+		$key->{code} = "do $source" ;
 	}
 
-	my $deparser = B::Deparse->new("-p", "-sC");
-
-	my $source = eval { $deparser->coderef2text( $extract_code ) } ;
-
-	unless( $source ) {
-
-		$@ = "Can't use [$extract_code] as key extractor";
-		return ;
-	}
-
-#print "S [$source]\n" ;
-
-# Return just the juicy pulp inside the braces...
-
-	return "do $source" ;
+	return @closures ;
 }
+
 
 # this is used to check for any mutually exclusive attribute in
 # defaults or keys
@@ -432,7 +478,6 @@ CMP
 			unless $key->{type} eq 'string' && $key->{no_case} ;
 		$plain_compare =~ s/EXTRACT/$key->{code}/ ;
 
-
 		push( @plain_compares, $plain_compare ) ;
 	}
 
@@ -448,6 +493,9 @@ CMP
 
 	my $source = <<SUB ;
 sub {
+use strict ;
+use warnings ;
+	$options->{init_code}
 	$open_bracket
 	sort {
 $compare_source
@@ -507,6 +555,7 @@ CMP
 
 	my $source = <<SUB ;
 sub {
+	$options->{init_code}
 	my ( $cache_dcl ) ;
 
 	$open_bracket
@@ -1006,7 +1055,7 @@ common part of the key extraction is:
 And the make_sorter call is:
 
 	my $sorter = make_sorter( 
-		style => 'ST',
+		'ST',
 		init_code => 'my( $str, $num ) ;',
 		string => 'do{( $str, $num ) =
 			$_->[0][0]{a} =~ /^(\w+):(\d+)$/; $str}',
@@ -1022,7 +1071,7 @@ they process all the keys of a record at one time and can use
 variables declared in C<init_code> to transfer data to later keys. The
 plain and orcish sorts may not process a later key at the same time as
 an earlier key (that only happens when the earlier key is compared to
-an equal key. Also for C<init_code> to be a win, the data set must be
+an equal key). Also for C<init_code> to be a win, the data set must be
 large enough and the work to extract the keys must be hard enough for
 the savings to be noticed. The test init_code.t shows some examples
 and you can see the speedup when you run:
@@ -1270,6 +1319,38 @@ locale settings to affect string sorts.
 		},
 	) ;
 
+=head3 C<closure>
+
+This Boolean attribute causes this key to use call its CODE reference
+to extract its value. This is useful if you need to access a lexical
+variable during the key extraction. A typical use would be if you have
+a sorting order stored in a lexical and need to access that from the
+extraction code. If you didn't set the C<closure> attribute for this
+key, the generated source (see Key Extraction) would not be able to
+see that lexical which will trigger a Perl compiling error in
+make_sorter.
+
+	my @months = qw( 
+		January February March April May June 
+		July August September October November December ) ;
+	my @month_jumble = qw(
+		February June October March January April
+		July November August December May September ) ;
+
+	my %month_to_num ;
+	@month_to_num{ @months } = 1 .. @months ;
+
+# this will fail to generate a sorter if 'closure' is removed
+# as %month_to_num will not be in scope to the eval inside sort_maker.
+
+	my $sorter = make_sorter(
+		'closure',
+		number => sub { $month_to_num{$_} },
+	) ;
+
+	my @sorted = $sorter->( @month_jumble ) ;
+
+
 =head3 C<signed/unsigned/signed_float/unsigned_float> (GRT only)
 
 These Boolean attributes are only used by the GRT sort style. They are
@@ -1330,18 +1411,20 @@ advantage of qr// over a string is that the qr// will be syntax
 checked at compile time while the string only later when the generated
 sorter is compiled by an eval.
 
-If a CODE reference is used, then the B::Deparse module is used to
-deparse it back into Perl source. This source is then used to extract
-the key in the generated sorter. As with qr//, the advantage is that
-the extraction code is syntax checked at compile time and not
-runtime. Also the deparsed code is wrapped in a C<do{}> block so you
-may use complex code to extract the key.
+If a CODE reference is found, it is used to extract the key in the
+generated sorter. As with qr//, the advantage is that the extraction
+code is syntax checked at compile time and not runtime. Also the
+deparsed code is wrapped in a C<do{}> block so you may use complex
+code to extract the key. In the default case a CODE reference will be
+deparsed by the B::Deparse module into Perl source. If the key has the
+C<closure> attribute set, the code will be called to extract the key.
 
-The following will generate the exact same sorter:
+The following will generate sorters with exact same behavior:
 
 	$sorter = make_sorter( 'ST', string => '/(\w+)/' ) ;
 	$sorter = make_sorter( 'ST', string => qr/(\w+)/ ) ;
 	$sorter = make_sorter( 'ST', string => sub { /(\w+)/ } ) ;
+	$sorter = make_sorter( 'ST', 'closure', string => sub { /(\w+)/ } ) ;
 
 Extraction code for a key can be set in one of three ways.
 
